@@ -1,0 +1,20 @@
+---
+# данные для работы с телеграм ботом
+telegram:
+  token: 
+  client_id: 
+  client_secret: 
+  time_pause_request: 
+  time_fresh_data: 
+  timeout_update: 
+  offset: 
+  is_debug: false
+# параметры сервера
+server:
+  host:
+  port:
+# параметры клиента, делающего запросы к API сервиса
+api:
+  timeout: 
+# уровень логирования сервиса
+is_debug:

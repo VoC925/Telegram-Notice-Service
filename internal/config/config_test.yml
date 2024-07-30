@@ -1,0 +1,19 @@
+---
+# данные для работы с телеграм ботом
+telegram:
+  token: token_test
+  client_id: client_id_test
+  client_secret: client_secret_test
+  time_pause_request: 40s
+  time_fresh_data: 24s
+  timeout_update: 59
+  offset: 0
+  is_debug: true
+# параметры сервера
+server:
+  host: localhost
+  port: 9023
+api:
+  timeout: 20s
+# уровень логирования
+is_debug: true
