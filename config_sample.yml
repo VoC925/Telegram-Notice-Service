@@ -9,10 +9,6 @@ telegram:
   timeout_update: 
   offset: 
   is_debug: false
-# параметры сервера
-server:
-  host:
-  port:
 # параметры клиента, делающего запросы к API сервиса
 api:
   timeout: 

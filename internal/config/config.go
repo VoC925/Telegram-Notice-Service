@@ -23,10 +23,6 @@ type Config struct {
 		Offset           int           `yaml:"offset" env-default:"0"`
 		IsDebug          bool          `yaml:"is_debug" env-default:"false"`
 	} `yaml:"telegram"`
-	Server struct {
-		Host string `yaml:"host" env-default:"localhost"`
-		Port int    `yaml:"port" env-default:"8080"`
-	} `yaml:"server"`
 	Api struct {
 		Timeout time.Duration `yaml:"timeout" env-default:"30s"`
 	} `yaml:"api"`

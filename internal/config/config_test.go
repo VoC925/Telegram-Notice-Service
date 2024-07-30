@@ -23,8 +23,6 @@ func TestXxx(t *testing.T) {
 	assert.Equal(t, cfg.Telegram.TimeFreshData, time.Duration(time.Second*24))
 	assert.Equal(t, cfg.Telegram.Offset, 0)
 	assert.Equal(t, cfg.Telegram.IsDebug, true)
-	assert.Equal(t, cfg.Server.Host, "localhost")
-	assert.Equal(t, cfg.Server.Port, 9023)
 	assert.Equal(t, cfg.Api.Timeout, time.Duration(time.Second*20))
 	assert.Equal(t, cfg.IsDebug, true)
 }
