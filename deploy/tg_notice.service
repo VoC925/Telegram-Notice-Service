@@ -1,0 +1,14 @@
+[Unit]
+Description=TG Notice
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/apps/tg_notice
+ExecStart=/root/apps/tg_notice/tg_service --config=/root/apps/config.yml
+Restart=always
+RestartSec=4
+StandardOutput=inherit
+
+[Install]
+WantedBy=multi-user.target
