@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -24,7 +25,7 @@ type storeToken struct {
 
 // конструктор
 func NewStoreToken() Storer {
-	slog.Debug("создано хранилище токенов")
+	slog.Info("создано хранилище токенов")
 	return &storeToken{
 		mu:   &sync.RWMutex{},
 		cash: make(map[int64]*models.Token),
@@ -36,7 +37,7 @@ func (s *storeToken) AddAccessToken(chatID int64, token *models.Token) {
 	s.mu.Lock()
 	s.cash[chatID] = token
 	s.mu.Unlock()
-	slog.Debug("added new token")
+	slog.Info(fmt.Sprintf("chat_id:%v; added new token", chatID))
 }
 
 // метод возвращает токен из хранилища

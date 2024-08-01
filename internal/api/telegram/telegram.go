@@ -72,7 +72,7 @@ func NewTelegramApi() (*TelegramApi, error) {
 		slog.String("bot_account", tgApi.botApi.Self.UserName),
 		slog.String("timeout_client", cfg.Api.Timeout.String()),
 		slog.Int("timeout_update", cfg.Telegram.TimeoutUpdate),
-	).Debug("bot created")
+	).Info("bot created")
 	return tgApi, nil
 }
 
@@ -99,7 +99,7 @@ func (tg *TelegramApi) updateEventCh() tgbotapi.UpdatesChannel {
 
 // метод запуска телеграм бота
 func (tg *TelegramApi) Start() {
-	slog.Debug("bot working started succesfully")
+	slog.Info("bot working started succesfully")
 	tg.listenUpdates()
 }
 
@@ -108,11 +108,11 @@ func (tg *TelegramApi) listenUpdates() {
 	// чтение из канала updates
 	for update := range tg.updateEventCh() {
 		if update.Message != nil { // If we got a message
-			slog.With(
-				slog.String("user", update.Message.From.UserName),
-				slog.Any("chatID", update.Message.Chat.ID),
-				slog.String("msg", update.Message.Text),
-			).Info("message received")
+			slog.Info(fmt.Sprintf("chat_id: %v; user: %s; msg receieved: %s",
+				update.Message.Chat.ID,
+				update.Message.From.UserName,
+				update.Message.Text,
+			))
 			// логика обработки сообщения в горутине, метод обрабатывается в горутине
 			// так как чтение из канала уведомлений является блокирующей операцией, то
 			// необходимо продолжать читать сообщения полльзователя
@@ -190,7 +190,14 @@ func (tg *TelegramApi) handleMsg(msg *tgbotapi.Message) error {
 }
 
 func (tg *TelegramApi) info(chatID int64) {
-	tg.sendMsg(chatID, config.RespInfo)
+	tg.sendMsg(chatID,
+		fmt.Sprintf(config.RespInfo,
+			config.AuthCmd,
+			config.SendCmd,
+			config.StopCmd,
+			config.SendCmd,
+		),
+	)
 }
 
 // метод закрывает канал и останаваливает получение новых уведомлений
@@ -200,7 +207,7 @@ func (tg *TelegramApi) stopSendNotice() bool {
 		return false
 	}
 	close(tg.stopNoticeCh)
-	slog.Debug("канал stopNoticeCh для чтения закрыт")
+	slog.Info("канал stopNoticeCh для чтения закрыт")
 	// так как канал закрыт, то он кидает бесконечно новые структуры
 	// необходимо перезаписать значение канала для того, чтобы была
 	// возможность заново запускать отправку новых уведомлений
@@ -221,7 +228,7 @@ func (tg *TelegramApi) sendMsg(chatID int64, msg string) {
 func (tg *TelegramApi) startSendNotice(chatID int64) {
 	// проверка на уже запущенное чтение
 	if tg.isSending {
-		slog.Debug("получение уведомлений уже было запущено")
+		slog.Info(fmt.Sprintf("chat_id: %v; получение уведомлений уже было запущено", chatID))
 		tg.sendMsg(chatID, config.RespStartedAlready)
 		return
 	}
@@ -230,7 +237,7 @@ func (tg *TelegramApi) startSendNotice(chatID int64) {
 	// берем токен из хранилища
 	t, err := tg.tokenStorage.ReturnAccessToken(chatID)
 	if err != nil {
-		slog.Debug("ошибка получения токена метод startSendNotice()")
+		slog.Info(fmt.Sprintf("chat_id: %v; ошибка получения токена метод startSendNotice()", chatID))
 		tg.sendMsg(chatID, config.RespTokenFail)
 		return
 	}
@@ -242,11 +249,11 @@ loop:
 		select {
 		// чтение из канала уведомлений
 		case data := <-tg.yandexApi.Update():
-			slog.Debug("Данные получены из канала")
+			slog.Info(fmt.Sprintf("chat_id: %v; данные получены из канала", chatID))
 			tg.sendMsg(chatID, models.UpdateInfoSlice(data).String())
-		// чтение из канала остановки отправки уведомлений
+			// чтение из канала остановки отправки уведомлений
 		case <-tg.stopNoticeCh:
-			slog.Debug("получен сигнал о закрытии канала stopNoticeCh")
+			slog.Info(fmt.Sprintf("chat_id: %v; получен сигнал о закрытии канала stopNoticeCh", chatID))
 			// надо закрыть канал и выйти из горутины UpdateDiskData()
 			tg.yandexApi.Stop()
 			break loop
@@ -261,7 +268,7 @@ func (tg *TelegramApi) authorize(chatID int64) {
 	t, err := tg.tokenStorage.ReturnAccessToken(chatID)
 	// если токена нет
 	if errors.Is(err, errorApi.ErrTokenNotExist) {
-		slog.Debug("токена нет в хранилище")
+		slog.Info(fmt.Sprintf("chat_id: %v; токена нет в хранилище", chatID))
 		tg.handleAuth(chatID)
 		return
 	}
@@ -271,7 +278,7 @@ func (tg *TelegramApi) authorize(chatID int64) {
 		tg.handleAuth(chatID)
 		return
 	}
-	slog.Debug("токен есть в хранилище и он валиден")
+	slog.Info(fmt.Sprintf("chat_id: %v; токен есть в хранилище и он валиден", chatID))
 	// если токен есть в хранилище и он валиден
 	tg.sendMsg(chatID, config.RespAuthorizedAlready)
 }
@@ -316,7 +323,7 @@ func (tg *TelegramApi) specialFeature(chatID int64) {
 
 // метод закрывающий канал update
 func (tg *TelegramApi) Close() error {
-	slog.Debug("stop listening update chanel")
+	slog.Info("stop listening update chanel")
 	tg.botApi.StopReceivingUpdates()
 	return nil
 }
