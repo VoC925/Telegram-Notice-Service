@@ -12,8 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HOST: root@92.53.70.68
-      DEPLOY_DIRECTORY: /root/apps/tg_notice
-      CONFIG_PATH: /root/apps/tg_notice/config.yaml
+      DEPLOY_DIRECTORY: /root/apps
 
     steps:
       - name: Checkout repository
@@ -47,10 +46,6 @@ jobs:
       - name: Remove old systemd service file
         run: |
           ssh -i deploy_key.pem -o StrictHostKeyChecking=no ${{ env.HOST }} "rm -f /etc/systemd/system/tg_notice.service"
-      - name: List workspace contents
-        run: |
-          echo "Listing deployment folder contents:"
-          ls -la ${{ github.workspace }}/deploy
       - name: Copy systemd service file and config
         run: |
           scp -i deploy_key.pem -o StrictHostKeyChecking=no ${{ github.workspace }}/deploy/tg_notice.service ${{ env.HOST }}:/tmp/tg_notice.service

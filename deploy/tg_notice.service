@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 User=root
-WorkingDirectory=/root/apps/tg_notice
-ExecStart=/root/apps/tg_notice/tg_service --config=/root/apps/config.yml
+WorkingDirectory=/root/apps
+ExecStart=/root/apps/tg_service
 Restart=always
 RestartSec=4
 StandardOutput=inherit
