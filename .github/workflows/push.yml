@@ -50,10 +50,10 @@ jobs:
       - name: List workspace contents
         run: |
           echo "Listing deployment folder contents:"
-          ls -la ${{ github.workspace }}/deployment
+          ls -la ${{ github.workspace }}/deploy
       - name: Copy systemd service file and config
         run: |
-          scp -i deploy_key.pem -o StrictHostKeyChecking=no ${{ github.workspace }}/deployment/tg_notice.service ${{ env.HOST }}:/tmp/tg_notice.service
+          scp -i deploy_key.pem -o StrictHostKeyChecking=no ${{ github.workspace }}/deploy/tg_notice.service ${{ env.HOST }}:/tmp/tg_notice.service
           ssh -i deploy_key.pem -o StrictHostKeyChecking=no ${{ env.HOST }} "mv /tmp/tg_notice.service /etc/systemd/system/tg_notice.service"
       - name: Start application
         run: |
