@@ -11,7 +11,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      HOST: root@92.53.70.68
+      HOST: root@78.155.196.172
       DEPLOY_DIRECTORY: /root/apps
 
     steps:

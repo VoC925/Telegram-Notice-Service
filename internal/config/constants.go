@@ -1,12 +1,14 @@
 package config
 
 const (
-	// команды
+	// команды для всех
 	InfoCmd    = "info"
 	AuthCmd    = "auth"     // авторизация
 	SendCmd    = "send"     // запуск бота
 	StopCmd    = "stop"     // остановка отправки уведомлений бота
 	SpecialCmd = "business" // пасхалка-команда
+	// команды для админа
+	DeleteListeners = "delete" // удалить всех слушателей, кроме самого админа
 	// состояния авторизации
 	NotAuthorized Auth = iota
 	Authorized
@@ -26,12 +28,15 @@ const (
 	RespUnknownCmd        = "Данная команда не поддерживается"
 	RespOnlyCmd           = "Поддерживаются только команды вида '/(команда)'"
 	RespLetsAuth          = "Для начала работы с сервисом необходимо перейти по ссылке ниже"
-	RespNeedAuth          = "Для начала работы с сервисом необходимо авторизоваться"
+	RespNeedAuth          = "Для начала работы с сервисом необходимо авторизоваться администратору"
 	RespSendCode          = "Введите код, полученный при переходе по ссылке (код действителен 10 минут)"
-	RespAuthorizedAlready = "Вы уже были авторизованы ранее"
+	RespAuthorizedAlready = "Вы уже авторизованы, администратор"
 	RespAuthFail          = "Произошла ошибка авторизации попробуйте снова"
 	RespAuthSuccess       = "Авторизация прошла успешно"
 	RespTokenFail         = "Возникла внутренняя ошибка. Попробуйте выполнить команду снова"
+	RespListenerExist     = "Бот уже был запущен ранее"
+	RespOnlyAdmin         = "Команда доступна только для администратора"
+	RespStopedFirstly     = "Невозможно остановить чтение уведомлений, пока процесс чтения не был запущен"
 	// ссылки
 	FeatureURL   = `https://www.youtube.com/watch?v=WR9mvNa6FDM#access_token=y0_AgAAAAAIYxaZAAwb5AAAAAEKnHJQAAAasOKqKaZCoLE_95VxCuFIyRKhVQ&token_type=bearer&expires_in=31368557&cid=ahnwb0r94k5uavpykpndj4upc8`
 	AuthorizeURL = `https://oauth.yandex.ru/authorize` // url для получение OAuth токена, параметр - значение client_id

@@ -22,6 +22,7 @@ type Config struct {
 		TimeoutUpdate    int           `yaml:"timeout_update" env-default:"60s"`
 		Offset           int           `yaml:"offset" env-default:"0"`
 		IsDebug          bool          `yaml:"is_debug" env-default:"false"`
+		Admin            string        `yaml:"admin" env-required:"true"`
 	} `yaml:"telegram"`
 	Api struct {
 		Timeout time.Duration `yaml:"timeout" env-default:"30s"`

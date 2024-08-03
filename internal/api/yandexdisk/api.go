@@ -26,10 +26,10 @@ type (
 )
 
 type YandexDiskApi interface {
-	Update() <-chan []*models.UpdateInfo // метод, который отправляет через канал полученные обновления
-	Close() error                        // метод для закрытия соедиения с API
-	UpdateDiskData(string)               // метод опрашивающий API
-	Stop()                               // метод останавливающий отправку уведомлений
+	Update() <-chan *models.UpdateInfoSlice // метод, который отправляет через канал полученные обновления
+	Close() error                           // метод для закрытия соедиения с API
+	UpdateDiskData(string)                  // метод опрашивающий API
+	Stop()                                  // метод останавливающий отправку уведомлений
 	// авторизация
 	AuthorizeURL() string                            // запросить ссылку для получение кода авторизации
 	RequestToken(code string) (*models.Token, error) // получить токен из кода авторизации
@@ -41,8 +41,8 @@ type yandexDiskAPI struct {
 	client        *http.Client
 	pauseRequest  time.Duration // период опроса API
 	timeFreshData time.Duration
-	updateCh      chan []*models.UpdateInfo // канал для отправки обновлений
-	stopCh        chan struct{}             // канал для остановки горутины отправки уведомлений
+	updateCh      chan *models.UpdateInfoSlice // канал для отправки обновлений
+	stopCh        chan struct{}                // канал для остановки горутины отправки уведомлений
 }
 
 // конструктор
@@ -56,13 +56,13 @@ func NewYandexDiskAPI() YandexDiskApi {
 		},
 		pauseRequest:  cfg.Telegram.TimePauseRequest,
 		timeFreshData: cfg.Telegram.TimeFreshData,
-		updateCh:      make(chan []*models.UpdateInfo),
+		updateCh:      make(chan *models.UpdateInfoSlice),
 		stopCh:        make(chan struct{}),
 	}
 }
 
 // метод возвращает канал для чтения данных
-func (api *yandexDiskAPI) Update() <-chan []*models.UpdateInfo {
+func (api *yandexDiskAPI) Update() <-chan *models.UpdateInfoSlice {
 	return api.updateCh
 }
 
@@ -125,11 +125,6 @@ func (c *yandexDiskAPI) validResponse(resp *http.Response) error {
 		slog.With(slog.Int("code", resp.StatusCode)).Debug("bad status code response")
 		return errorApi.ErrInvalidStatusCode
 	}
-	// проверка заголовков
-	// if resp.Header.Get("Content-type") != "application/json" {
-	// 	slog.With(slog.String("Content-type", resp.Header.Get("Content-type"))).Debug("bad header response")
-	// 	return errorApi.ErrHeaderContentType
-	// }
 	return nil
 }
 
@@ -210,7 +205,7 @@ loop:
 				continue
 			}
 			// отправляем в канал, если есть что отправлять
-			c.updateCh <- *filteredData
+			c.updateCh <- filteredData
 			slog.Debug("Данные отправлены в канал")
 		case <-c.stopCh:
 			slog.Debug("Получен сигнал о закрытии канала stopCh")

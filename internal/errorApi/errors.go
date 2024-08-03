@@ -12,6 +12,7 @@ var (
 	ErrStartAgain   = errors.New("bot started already")
 	ErrStop         = errors.New("bot stop failed")
 	ErrCtxDeadline  = errors.New("deadline handlind exceeded")
+	ErrNoListener   = errors.New("listener doesn't exist")
 	// command
 	ErrStarComand = errors.New("'/start' failed")
 	// store

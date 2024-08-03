@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 
-	"github.com/VoC925/tgBotNotice/internal/api/store"
 	"github.com/VoC925/tgBotNotice/internal/api/yandexdisk"
 	"github.com/VoC925/tgBotNotice/internal/config"
 	"github.com/VoC925/tgBotNotice/internal/errorApi"
@@ -16,18 +16,19 @@ import (
 
 // структура API telegram бота
 type TelegramApi struct {
-	botApi   *tgbotapi.BotAPI
-	endpoint string
+	bot *tgbotapi.BotAPI // структура телеграмм бота
 
 	yandexApi yandexdisk.YandexDiskApi // интерфейс API Яндекс Диска
 
-	stopNoticeCh chan struct{}           // канал для остановки чтения уведомлений
-	updateCh     tgbotapi.UpdatesChannel // канал чтения сообщений от пользователя самого бота
-	authCodeCh   chan string             // канал для передачи кода автторизации
+	updateCh   tgbotapi.UpdatesChannel // канал чтения сообщений от пользователя самого бота
+	authCodeCh chan string             // канал для передачи кода авторизации
 
-	isSending    bool         // состояние чтения уведомлений: true - читает, false - не читает
-	isAuthState  bool         // состояние авторизации: true - пользователю отправлена ссылка авторизации
-	tokenStorage store.Storer // мапа хранилище токенов
+	admin       string        // никнейм админа
+	isAuthState bool          // состояние авторизации одно (только админ): true - пользователю отправлена ссылка авторизации
+	token       *models.Token // access токен
+
+	mu        sync.RWMutex   // мьютекс для мапы isSending
+	listeners map[int64]bool // состояние чтения уведомлений для каждого отдельного чата: true - читает, false - не читает
 }
 
 // конструктор структуры TelegramApi
@@ -36,16 +37,16 @@ func NewTelegramApi() (*TelegramApi, error) {
 	cfg := config.ConfigInstance
 
 	tgApi := &TelegramApi{
-		endpoint:     tgbotapi.APIEndpoint,
-		isSending:    false,
-		isAuthState:  false,
-		stopNoticeCh: make(chan struct{}),
-		authCodeCh:   make(chan string),
+		listeners:   make(map[int64]bool),
+		isAuthState: false,
+		authCodeCh:  make(chan string),
+		token:       nil,
+		mu:          sync.RWMutex{},
 	}
 
 	bot, err := tgbotapi.NewBotAPIWithClient(
 		cfg.Telegram.Token,
-		tgApi.endpoint,
+		tgbotapi.APIEndpoint,
 		// клиент для telegram API
 		&http.Client{
 			Timeout: cfg.Api.Timeout,
@@ -54,52 +55,34 @@ func NewTelegramApi() (*TelegramApi, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errorApi.ErrCreateBotApi, err)
 	}
-	tgApi.botApi = bot
+	tgApi.bot = bot
 
 	// API для яндекс диска
-	tgApi.setYandexApi(yandexdisk.NewYandexDiskAPI())
-
-	// хранилище токенов
-	tgApi.tokenStorage = store.NewStoreToken()
+	tgApi.yandexApi = yandexdisk.NewYandexDiskAPI()
 
 	// уровень debug
-	tgApi.botApi.Debug = cfg.Telegram.IsDebug
+	tgApi.bot.Debug = cfg.Telegram.IsDebug
 
 	// настройка updates
-	tgApi.setUpdates()
+	u := tgbotapi.NewUpdate(cfg.Telegram.Offset)
+	u.Timeout = cfg.Telegram.TimeoutUpdate
+	tgApi.updateCh = tgApi.bot.GetUpdatesChan(u)
+
+	// установка админа
+	tgApi.admin = cfg.Telegram.Admin
 
 	slog.With(
-		slog.String("bot_account", tgApi.botApi.Self.UserName),
+		slog.String("bot_account", tgApi.bot.Self.UserName),
 		slog.String("timeout_client", cfg.Api.Timeout.String()),
 		slog.Int("timeout_update", cfg.Telegram.TimeoutUpdate),
 	).Info("bot created")
 	return tgApi, nil
 }
 
-// метод устанавливает значение интерфейса API Яндекс Диска
-func (tg *TelegramApi) setYandexApi(api yandexdisk.YandexDiskApi) *TelegramApi {
-	tg.yandexApi = api
-	return tg
-}
-
-// установка updates
-func (tg *TelegramApi) setUpdates() *TelegramApi {
-	cfg := config.ConfigInstance
-	u := tgbotapi.NewUpdate(cfg.Telegram.Offset)
-	u.Timeout = cfg.Telegram.TimeoutUpdate
-	tg.updateCh = tg.botApi.GetUpdatesChan(u)
-	return tg
-}
-
-// метод возвращет канал, который слушает апдейты
-func (tg *TelegramApi) updateEventCh() tgbotapi.UpdatesChannel {
-	// tgbotapi.
-	return tg.updateCh
-}
-
 // метод запуска телеграм бота
 func (tg *TelegramApi) Start() {
 	slog.Info("bot working started succesfully")
+	// метод отправляющий
 	tg.listenUpdates()
 }
 
@@ -127,47 +110,55 @@ func (tg *TelegramApi) listenUpdates() {
 	}
 }
 
+// метод возвращет канал, который слушает апдейты
+func (tg *TelegramApi) updateEventCh() tgbotapi.UpdatesChannel {
+	// tgbotapi.
+	return tg.updateCh
+}
+
 // метод для обработки сообщений
 func (tg *TelegramApi) handleMsg(msg *tgbotapi.Message) error {
 	// контекст для запроса к API
 	chatID := msg.Chat.ID
-	// slog.With(slog.Any("value", chatID)).Debug("chatID")
+	from := msg.From.UserName
 	// пришла команда
 	if msg.IsCommand() {
-		// обнуление состояния авторизации, если ранее пользователь запустил процесс авторизации
+		// обнуление состояния авторизации, если ранее админ запустил процесс авторизации
 		// и вместо того, чтобы ввести код авторизации ввел новую команду
-		if tg.isAuthState {
+		// команда только для админа
+		if tg.isAuthState && tg.isAdmin(from) {
 			tg.isAuthState = false
 		}
 		// команды не требующие авторизации
 		switch msg.Command() {
 		case config.AuthCmd:
-			tg.authorize(chatID)
+			// команда только для админа
+			tg.auth(chatID, from)
 			return nil
 		case config.InfoCmd:
 			tg.info(chatID)
 			return nil
+		case config.SpecialCmd:
+			tg.specialFeature(chatID)
+			return nil
+		case config.DeleteListeners:
+			tg.deleteAllListeners(chatID, from)
+			return nil
 		default:
+			// tg.sendMsg(chatID, config.RespUnknownCmd)
+			// return nil
 		}
 		// команды требующие авторизации пользователя
-		if tg.isAuthorized(chatID) {
+		if tg.isAuthorized() {
 			switch msg.Command() {
-			case config.SpecialCmd:
-				tg.specialFeature(chatID)
-				return nil
-			// старт чтения уведомлений
 			case config.SendCmd:
-				// запускается в горутине, так как метод блокирующий
+				// старт чтения уведомлений
 				tg.startSendNotice(chatID)
 				return nil
-				// остановка чтения уведомления
 			case config.StopCmd:
-				if !tg.stopSendNotice() {
-					tg.sendMsg(chatID, config.RespStopedAlready)
-				}
-				tg.sendMsg(chatID, config.RespStop)
+				// остановка чтения уведомления
+				tg.stopSendNotice(chatID)
 				return nil
-				// пасхалка
 			default:
 				// случай, если пользователь отправил не известную команду
 				tg.sendMsg(chatID, config.RespUnknownCmd)
@@ -179,7 +170,7 @@ func (tg *TelegramApi) handleMsg(msg *tgbotapi.Message) error {
 		}
 	}
 	// ответ, если пришла не команда, а просто сообщение
-	if tg.isAuthState { // если ожидается код авторизации
+	if tg.isAuthState && tg.isAdmin(from) { // если ожидается код авторизации от админа
 		// отправляем код в канал
 		tg.authCodeCh <- msg.Text
 		tg.isAuthState = false
@@ -187,6 +178,91 @@ func (tg *TelegramApi) handleMsg(msg *tgbotapi.Message) error {
 	}
 	tg.sendMsg(msg.Chat.ID, config.RespOnlyCmd)
 	return nil
+}
+
+func (tg *TelegramApi) auth(chatID int64, from string) {
+	if tg.token != nil {
+		tg.sendMsg(chatID, config.RespAuthorizedAlready)
+		return
+	}
+	if tg.isAdmin(from) {
+		tg.authorize(chatID)
+		return
+	}
+	tg.sendMsg(chatID, config.RespOnlyAdmin)
+}
+
+// метод отправляет всем слушателям из мапы listener данные
+func (tg *TelegramApi) sendToListeners(data *models.UpdateInfoSlice) {
+	tg.mu.RLock()
+	if len(tg.listeners) == 0 {
+		// если пока нет слушателей, то выходим
+		tg.mu.RUnlock()
+		return
+	}
+	for chatID, value := range tg.listeners {
+		if value {
+			// если chat_id имеет состояние true на чтении
+			tg.sendMsg(chatID, data.String())
+		}
+	}
+	tg.mu.RUnlock()
+}
+
+// метод удаляющий всех слушателей, кроме самого админа
+// команда только для админа
+func (tg *TelegramApi) deleteAllListeners(chatID int64, from string) {
+	// проверка, админ ли отправил команду
+	if tg.isAdmin(from) {
+		tg.mu.Lock()
+		for key := range tg.listeners {
+			if key == chatID {
+				// chat_id принадлежит админу
+				continue
+			}
+			// удаляем пару ключ-значение
+			delete(tg.listeners, key)
+		}
+		tg.mu.Unlock()
+		slog.Info("Все слушатели удалены из мапы listeners")
+		return
+	}
+	tg.sendMsg(chatID, config.RespOnlyAdmin)
+}
+
+// метод возвращает какое состояние чтения у заданного chatID
+// если chatID нет в мапе, то возвращает ошибка
+func (tg *TelegramApi) listenerState(chatID int64) (bool, error) {
+	tg.mu.RLock()
+	state, ok := tg.listeners[chatID]
+	if !ok {
+		tg.mu.RUnlock()
+		slog.Info(fmt.Sprintf("chat_id: %v; нет в мапе listener", chatID))
+		return false, errorApi.ErrNoListener
+	}
+	tg.mu.RUnlock()
+	return state, nil
+}
+
+// метод добавляющий новый chat_id в качестве нового listener
+func (tg *TelegramApi) addListener(chatID int64) {
+	tg.mu.Lock()
+	tg.listeners[chatID] = false
+	tg.mu.Unlock()
+	slog.Info(fmt.Sprintf("chat_id: %v; добавлен в мапу listeners", chatID))
+}
+
+// метод изменяет состояние чтения
+func (tg *TelegramApi) changeStateListener(chatID int64, state bool) {
+	tg.mu.Lock()
+	tg.listeners[chatID] = state
+	tg.mu.Unlock()
+	slog.Info(fmt.Sprintf("chat_id: %v; изменено состояние на %t", chatID, state))
+}
+
+// метод проверяет является ли пользователь админом
+func (tg *TelegramApi) isAdmin(from string) bool {
+	return from == tg.admin
 }
 
 func (tg *TelegramApi) info(chatID int64) {
@@ -200,20 +276,52 @@ func (tg *TelegramApi) info(chatID int64) {
 	)
 }
 
-// метод закрывает канал и останаваливает получение новых уведомлений
-func (tg *TelegramApi) stopSendNotice() bool {
-	// если не было запущено чтение уведомлений, то выходим
-	if !tg.isSending {
-		return false
+// метод добавляет новый client_id в мапу listener и меняет его состояние на true
+// true - готов слушать
+func (tg *TelegramApi) startSendNotice(chatID int64) {
+	state, err := tg.listenerState(chatID)
+	if state && err == nil {
+		// проверка на уже запущенное чтение
+		// если state = true, то есть уже запущено чтение
+		tg.sendMsg(chatID, config.RespStartedAlready)
+		return
 	}
-	close(tg.stopNoticeCh)
-	slog.Info("канал stopNoticeCh для чтения закрыт")
-	// так как канал закрыт, то он кидает бесконечно новые структуры
-	// необходимо перезаписать значение канала для того, чтобы была
-	// возможность заново запускать отправку новых уведомлений
-	tg.stopNoticeCh = make(chan struct{})
-	tg.isSending = false
-	return true
+	// добавляем новый client_id в мапу listener
+	tg.addListener(chatID)
+	// изменяем состояние чтения на true
+	tg.changeStateListener(chatID, true)
+	tg.sendMsg(chatID, config.RespStart)
+}
+
+// метод меняет состояние client_id в мапе listeners на false
+func (tg *TelegramApi) stopSendNotice(chatID int64) {
+	state, err := tg.listenerState(chatID)
+	if errors.Is(err, errorApi.ErrNoListener) {
+		// если client_id нет в мапе
+		tg.sendMsg(chatID, config.RespStopedFirstly)
+		return
+	}
+	if !state && err != nil {
+		// проверка на уже остановленное чтение
+		// если state = false, то есть уже остановлено чтение
+		tg.sendMsg(chatID, config.RespStopedAlready)
+		return
+	}
+	// изменяем состояние чтения на false
+	tg.changeStateListener(chatID, false)
+	slog.Debug(fmt.Sprintf("client_id: %v; остановлено чтение", chatID))
+	tg.sendMsg(chatID, config.RespStop)
+}
+
+// метод для отправки уведомлений всем слушателям из мапы listeners
+func (tg *TelegramApi) sendingLoop() {
+	// метод отправляющий уведомления в канал путем зпросов к API
+	go tg.yandexApi.UpdateDiskData(tg.token.Value)
+	// слушаем канал уведомлений
+	for data := range tg.yandexApi.Update() {
+		tg.sendToListeners(data)
+	}
+	slog.Info("выход из метода startSendNotice()")
 }
 
 // метод для отправки сообщений об ошибке
@@ -221,96 +329,58 @@ func (tg *TelegramApi) stopSendNotice() bool {
 // msg - сообщение
 func (tg *TelegramApi) sendMsg(chatID int64, msg string) {
 	response := tgbotapi.NewMessage(chatID, msg)
-	tg.botApi.Send(response)
+	tg.bot.Send(response)
 }
 
-// метод запускает отправку новых уведомлений
-func (tg *TelegramApi) startSendNotice(chatID int64) {
-	// проверка на уже запущенное чтение
-	if tg.isSending {
-		slog.Info(fmt.Sprintf("chat_id: %v; получение уведомлений уже было запущено", chatID))
-		tg.sendMsg(chatID, config.RespStartedAlready)
-		return
-	}
-	tg.isSending = true
-	// метод отправляет уведомления в канал интерфейса в горутине
-	// берем токен из хранилища
-	t, err := tg.tokenStorage.ReturnAccessToken(chatID)
-	if err != nil {
-		slog.Info(fmt.Sprintf("chat_id: %v; ошибка получения токена метод startSendNotice()", chatID))
-		tg.sendMsg(chatID, config.RespTokenFail)
-		return
-	}
-	go tg.yandexApi.UpdateDiskData(t.Value)
-	tg.sendMsg(chatID, config.RespStart)
-
-loop:
-	for {
-		select {
-		// чтение из канала уведомлений
-		case data := <-tg.yandexApi.Update():
-			slog.Info(fmt.Sprintf("chat_id: %v; данные получены из канала", chatID))
-			tg.sendMsg(chatID, models.UpdateInfoSlice(data).String())
-			// чтение из канала остановки отправки уведомлений
-		case <-tg.stopNoticeCh:
-			slog.Info(fmt.Sprintf("chat_id: %v; получен сигнал о закрытии канала stopNoticeCh", chatID))
-			// надо закрыть канал и выйти из горутины UpdateDiskData()
-			tg.yandexApi.Stop()
-			break loop
-		}
-	}
-	slog.Debug("выход из метода startSendNotice()")
-}
-
-// авторизация
+// авторизация доступна только один раз
 func (tg *TelegramApi) authorize(chatID int64) {
-	// если пользователь авторизован, то есть токен в хранилище
-	t, err := tg.tokenStorage.ReturnAccessToken(chatID)
-	// если токена нет
-	if errors.Is(err, errorApi.ErrTokenNotExist) {
-		slog.Info(fmt.Sprintf("chat_id: %v; токена нет в хранилище", chatID))
+	// если токена нет значит админ не авторизовался
+	if tg.token == nil {
 		tg.handleAuth(chatID)
 		return
 	}
-	// если токен  протух
-	if t.IsValid() {
-		slog.Debug("токен протух")
+	// если токен протух
+	if !tg.token.IsValid() {
+		slog.Info("токен протух")
 		tg.handleAuth(chatID)
 		return
 	}
-	slog.Info(fmt.Sprintf("chat_id: %v; токен есть в хранилище и он валиден", chatID))
-	// если токен есть в хранилище и он валиден
+	slog.Info(fmt.Sprintf("chat_id: %v; токен есть и он валиден", chatID))
+	// если токен есть и он валиден
 	tg.sendMsg(chatID, config.RespAuthorizedAlready)
 }
 
 func (tg *TelegramApi) handleAuth(chatID int64) {
-	// состояние авторизации
+	// состояние авторизации у админа
 	tg.isAuthState = true
 	// если токена нет, значит отправляем пользователю ссылку авторизации
 	tg.sendMsg(chatID, fmt.Sprintf("%s:\n%s", config.RespLetsAuth, tg.yandexApi.AuthorizeURL()))
 	tg.sendMsg(chatID, config.RespSendCode)
 	// слушаем канал и ожидаем код подтверждения
 	for code := range tg.authCodeCh {
-		token, err := tg.yandexApi.RequestToken(code)
+		t, err := tg.yandexApi.RequestToken(code)
 		if err != nil {
 			slog.Error(err.Error())
 			tg.sendMsg(chatID, config.RespAuthFail)
 			return
 		}
-		// сохраняем новый токен в хранилище
-		tg.tokenStorage.AddAccessToken(chatID, token)
+		// сохраняем токен
+		tg.token = t
+		slog.Info("Добавлен новый access токен")
 		tg.sendMsg(chatID, config.RespAuthSuccess)
+
+		// запуск чтения из Api
+		tg.sendingLoop()
 	}
 }
 
-func (tg *TelegramApi) isAuthorized(chatID int64) bool {
-	t, err := tg.tokenStorage.ReturnAccessToken(chatID)
+func (tg *TelegramApi) isAuthorized() bool {
 	// если токена нет
-	if errors.Is(err, errorApi.ErrTokenNotExist) {
+	if tg.token == nil {
 		return false
 	}
 	// если токен протух
-	if t.IsValid() {
+	if tg.token.IsValid() {
 		return false
 	}
 	return true
@@ -324,6 +394,6 @@ func (tg *TelegramApi) specialFeature(chatID int64) {
 // метод закрывающий канал update
 func (tg *TelegramApi) Close() error {
 	slog.Info("stop listening update chanel")
-	tg.botApi.StopReceivingUpdates()
+	tg.bot.StopReceivingUpdates()
 	return nil
 }
